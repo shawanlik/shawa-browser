@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Shawa Browser Chat GPT</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval' data:;">
+  <style>
+    :root { --bg:#0b0b0d; --top:#0b57d0; --text:#e9eefc; --panel:#101216; --accent:#00d6a5; }
+    body,html { height:100%; margin:0; font-family: Arial, sans-serif; background:var(--bg); color:var(--text); }
+    #top { height:48px; display:flex; align-items:center; gap:8px; padding:6px; background:transparent; color:var(--text); }
+    #address { flex:1; height:32px; padding:6px; border-radius:6px; border:1px solid #222; background:#0f1113; color:var(--text); }
+    #go, #settingsBtn { height:32px; padding:6px 10px; border-radius:6px; border:none; cursor:pointer; background:var(--accent); color:#021; font-weight:700; }
+    #container { display:flex; height:calc(100% - 48px); }
+    #webwrap { flex:1; display:flex; flex-direction:column; }
+    webview { flex:1; border:none; }
+    #sidebar { width:420px; border-left:1px solid #151519; padding:12px; box-sizing:border-box; overflow:auto; background:var(--panel); }
+    #chatLog { height: calc(100% - 170px); overflow:auto; padding:8px; border-radius:6px; }
+    .msg { margin:6px 0; padding:10px; border-radius:8px; max-width:100%; word-break:break-word; }
+    .user { background:#072033; text-align:right; margin-left:40%; }
+    .assistant { background:#1a1f23; text-align:left; margin-right:40%; }
+    #inputRow { display:flex; gap:8px; margin-top:8px; }
+    #prompt { flex:1; height:80px; padding:10px; border-radius:8px; border:1px solid #222; background:#0f1113; color:var(--text); }
+    button { cursor:pointer; }
+    .modal { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:var(--panel); padding:16px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.6); display:none; z-index:9999; width:480px; max-width:95%; }
+    .modal.show { display:block; }
+    label { display:block; font-size:13px; margin-bottom:4px; color:var(--text); }
+    input[type="text"], select { width:100%; padding:8px; border-radius:6px; border:1px solid #222; background:#0f1113; color:var(--text); }
+  </style>
+</head>
+<body>
+  <div id="top">
+    <img src="assets/shawa-logo.png" alt="logo" style="height:36px; width:36px; border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,0.6)" />
+    <div style="font-weight:700; margin-right:8px;">Shawa Browser</div>
+    <input id="address" placeholder="https://example.com" value="https://example.com" />
+    <button id="go">Go</button>
+    <button id="settingsBtn">Settings</button>
+  </div>
+
+  <div id="container">
+    <div id="webwrap">
+      <webview id="page" src="https://example.com" style="width:100%; height:100%"></webview>
+    </div>
+
+    <div id="sidebar">
+      <h3 style="margin-top:0">Chat</h3>
+      <div id="chatLog"></div>
+      <div style="margin-top:8px;"><button id="sendPage">Analyze page</button> <button id="stopStream" disabled>Stop</button></div>
+      <div id="inputRow">
+        <textarea id="prompt" placeholder="Ask a question..." ></textarea>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <button id="send">Send</button>
+          <button id="clear">Clear</button>
+        </div>
+      </div>
+      <div style="margin-top:8px; font-size:12px; color:#9aa6b2;">
+        <div>Model: <span id="currentModel"></span></div>
+        <div>Theme: <span id="currentTheme"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings" class="modal" role="dialog" aria-modal="true">
+    <h3 style="color:var(--text)">Settings</h3>
+    <div style="margin-bottom:8px;">
+      <label>OpenAI API Key</label>
+      <input id="apiKey" type="text" placeholder="sk-..." />
+    </div>
+    <div style="margin-bottom:8px;">
+      <label>Model</label>
+      <select id="modelSelect">
+        <option value="gpt-4o-mini">gpt-4o-mini</option>
+        <option value="gpt-4-turbo">gpt-4-turbo</option>
+        <option value="gpt-4o">gpt-4o</option>
+      </select>
+    </div>
+    <div style="margin-bottom:8px;">
+      <label>Theme</label>
+      <select id="themeSelect">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px;">
+      <button id="saveSettings">Save</button>
+      <button id="closeSettings">Close</button>
+    </div>
+  </div>
+
+<script>
+const chatLog = document.getElementById('chatLog');
+const promptEl = document.getElementById('prompt');
+const sendBtn = document.getElementById('send');
+const clearBtn = document.getElementById('clear');
+const sendPageBtn = document.getElementById('sendPage');
+const stopStreamBtn = document.getElementById('stopStream');
+const address = document.getElementById('address');
+const goBtn = document.getElementById('go');
+const webview = document.getElementById('page');
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsModal = document.getElementById('settings');
+const apiKeyInput = document.getElementById('apiKey');
+const modelSelect = document.getElementById('modelSelect');
+const themeSelect = document.getElementById('themeSelect');
+const saveSettings = document.getElementById('saveSettings');
+const closeSettings = document.getElementById('closeSettings');
+const currentModel = document.getElementById('currentModel');
+const currentTheme = document.getElementById('currentTheme');
+
+let streaming = false;
+let streamBuffer = '';
+
+function appendMessage(role, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + (role === 'user' ? 'user' : 'assistant');
+  d.innerText = text;
+  chatLog.appendChild(d);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function appendOrUpdateStreaming(text) {
+  streamBuffer += text;
+  const last = chatLog.lastElementChild;
+  if (last && last.dataset && last.dataset.streaming === 'true') {
+    last.innerText = streamBuffer;
+  } else {
+    const d = document.createElement('div');
+    d.className = 'msg assistant';
+    d.dataset.streaming = 'true';
+    d.innerText = streamBuffer;
+    chatLog.appendChild(d);
+  }
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function finishStreaming() {
+  streamBuffer = '';
+  const last = chatLog.lastElementChild;
+  if (last && last.dataset && last.dataset.streaming === 'true') {
+    delete last.dataset.streaming;
+  }
+  streaming = false;
+  stopStreamBtn.disabled = true;
+}
+
+function loadSettings() {
+  const s = JSON.parse(localStorage.getItem('shawa.settings') || '{}');
+  apiKeyInput.value = s.apiKey || '';
+  modelSelect.value = s.model || 'gpt-4o-mini';
+  themeSelect.value = s.theme || 'dark';
+  applyTheme(themeSelect.value);
+  currentModel.innerText = modelSelect.value;
+  currentTheme.innerText = themeSelect.value;
+}
+function saveSettingsLocal() {
+  const s = { apiKey: apiKeyInput.value.trim(), model: modelSelect.value, theme: themeSelect.value };
+  localStorage.setItem('shawa.settings', JSON.stringify(s));
+  currentModel.innerText = s.model;
+  currentTheme.innerText = s.theme;
+  applyTheme(s.theme);
+  settingsModal.classList.remove('show');
+}
+
+function applyTheme(t) {
+  if (t === 'light') {
+    document.documentElement.style.setProperty('--bg', '#ffffff');
+    document.documentElement.style.setProperty('--panel', '#fafafa');
+    document.documentElement.style.setProperty('--text', '#111');
+  } else {
+    document.documentElement.style.setProperty('--bg', '#0b0b0d');
+    document.documentElement.style.setProperty('--panel', '#101216');
+    document.documentElement.style.setProperty('--text', '#e9eefc');
+  }
+}
+
+goBtn.addEventListener('click', ()=>{
+  let url = address.value.trim();
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  webview.src = url;
+});
+
+sendBtn.addEventListener('click', async ()=>{
+  const txt = promptEl.value.trim();
+  if (!txt) return;
+  appendMessage('user', txt);
+  promptEl.value = '';
+  try {
+    const settings = JSON.parse(localStorage.getItem('shawa.settings') || '{}');
+    const model = settings.model || 'gpt-4o-mini';
+    const resp = await window.shawa.chat({ messages: [{role:'user', content: txt}], model });
+    const assistant = resp.choices?.[0]?.message?.content ?? '[no reply]';
+    appendMessage('assistant', assistant);
+  } catch (e) {
+    appendMessage('assistant', 'Error: ' + (e.message || e));
+  }
+});
+
+clearBtn.addEventListener('click', ()=>{ chatLog.innerHTML = ''; });
+
+sendPageBtn.addEventListener('click', async ()=>{
+  try {
+    const pageText = await webview.executeJavaScript('(() => { try { return document.body.innerText.slice(0,20000); } catch(e){ return ""; } })()');
+    if (!pageText) { appendMessage('assistant', 'Failed to get page text'); return; }
+    appendMessage('user', 'Analyze page (first 20k chars)');
+    startStreaming([{role:'user', content: 'Analyze this page and give a short summary:\n' + pageText}]);
+  } catch(e) {
+    appendMessage('assistant', 'Error analyzing page: ' + (e.message || e));
+  }
+});
+
+function startStreaming(messages) {
+  if (streaming) return;
+  streaming = true;
+  stopStreamBtn.disabled = false;
+  streamBuffer = '';
+  appendMessage('user', messages.map(m=>m.content).join('\n').slice(0,500));
+  const settings = JSON.parse(localStorage.getItem('shawa.settings') || '{}');
+  const model = settings.model || 'gpt-4o-mini';
+  window.shawa.stream({ messages, model, max_tokens: 1000 });
+}
+
+stopStreamBtn.addEventListener('click', ()=>{
+  streaming = false;
+  stopStreamBtn.disabled = true;
+  appendMessage('assistant', '[Streaming stopped by user]');
+});
+
+window.shawa.onStreamChunk((chunk)=>{
+  if (!streaming) return;
+  const parts = chunk.split(/\r?\n/).filter(Boolean);
+  for (const p of parts) {
+    if (p.startsWith('data:')) {
+      const payload = p.replace(/^data:\s*/, '');
+      if (payload === '[DONE]') {
+        finishStreaming();
+        return;
+      }
+      try {
+        const obj = JSON.parse(payload);
+        const content = obj.choices?.[0]?.delta?.content || '';
+        if (content) appendOrUpdateStreaming(content);
+      } catch(e) {
+        appendOrUpdateStreaming(p + '\n');
+      }
+    } else {
+      appendOrUpdateStreaming(p);
+    }
+  }
+});
+
+window.shawa.onStreamDone(()=>{ finishStreaming(); });
+window.shawa.onStreamError((err)=>{ appendMessage('assistant', 'Streaming error: ' + err); streaming = false; stopStreamBtn.disabled = true; });
+
+settingsBtn.addEventListener('click', ()=>{ settingsModal.classList.add('show'); });
+closeSettings.addEventListener('click', ()=>{ settingsModal.classList.remove('show'); });
+saveSettings.addEventListener('click', ()=>{ saveSettingsLocal(); });
+
+loadSettings();
+(function showMaskedKey(){ const s = JSON.parse(localStorage.getItem('shawa.settings') || '{}'); apiKeyInput.value = s.apiKey || ''; })();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "name": "shawa-browser",
+  "version": "2.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win nsis",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "node-fetch": "^3.4.0"
+  },
+  "devDependencies": {
+    "electron": "^26.0.0",
+    "electron-builder": "^24.6.0"
+  },
+  "build": {
+    "appId": "com.shawa.browser",
+    "productName": "Shawa Browser Chat GPT",
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}
